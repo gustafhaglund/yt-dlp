@@ -255,6 +255,11 @@ class SVTPlayIE(SVTBaseIE):
         mobj = self._match_valid_url(url)
         video_id = mobj.group('id')
         svt_id = mobj.group('svt_id') or mobj.group('modal_id')
+        # svt: is an internal pseudo-URL (e.g. from SVTSeriesIE) with no webpage to fetch.
+        # fatal=False below does not cover it: NoSupportingHandlers is not a network_exception
+        if url.startswith('svt:'):
+            return self._extract_by_video_id(svt_id)
+
         webpage = self._download_webpage(url, video_id, fatal=not svt_id) or ''
 
         if not svt_id:
@@ -285,6 +290,20 @@ class SVTSeriesIE(SVTBaseIE):
             'description': 'md5:f71122f7cf2e52b643e75915e04cb83d',
         },
         'playlist_mincount': 318,
+    }, {
+        # Resolve entries instead of flat extraction to exercise the svt: pseudo-URLs
+        # See https://github.com/yt-dlp/yt-dlp/issues/17352
+        'url': 'https://www.svtplay.se/rederiet',
+        'info_dict': {
+            'id': 'jpmQYgn',
+            'title': 'Rederiet',
+            'description': 'md5:f71122f7cf2e52b643e75915e04cb83d',
+        },
+        'playlist_mincount': 2,
+        'params': {
+            'extract_flat': False,
+            'skip_download': True,
+        },
     }, {
         'url': 'https://www.svtplay.se/rederiet?tab=season-2-jpmQYgn',
         'info_dict': {
