@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 # Allow direct execution
+import json
 import os
 import sys
 import unittest
@@ -11,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from test.helper import FakeYDL
 from yt_dlp.extractor.svt import SVTBaseIE, SVTPlayIE, SVTSeriesIE
+from yt_dlp.utils import ExtractorError
 
 API_URL = 'https://api.svt.se/videoplayer-api/video/{}'
 WEBPAGE = (
@@ -66,7 +68,7 @@ class TestSVTSeriesIE(unittest.TestCase):
         # resolve the svt: entries; drive the full series -> url_result -> SVTPlayIE path.
         # Webpage requests are left unmocked so the real network layer would reject svt:
         series = {'data': {'listablesBySlug': [{
-            'id': 'jSERIES', 'name': 'Series', 'shortDescription': 'Description',
+            'id': 'jSERIES', 'slug': 'series', 'name': 'Series', 'shortDescription': 'Description',
             'associatedContent': [{'id': 'season-1', 'name': 'Season 1', 'items': [
                 {'item': {'videoSvtId': 'abc123'}}, {'item': {'videoSvtId': 'def456'}}]}],
         }]}}
@@ -75,6 +77,10 @@ class TestSVTSeriesIE(unittest.TestCase):
         def download_json(ie, url, video_id, *args, **kwargs):
             requested.append(url)
             if url == 'https://api.svt.se/contento/graphql':
+                # SVT caches GET responses regardless of the query string, so it must be POSTed
+                self.assertNotIn('query', kwargs)
+                self.assertIn('listablesBySlug(slugs: ["series"])', json.loads(kwargs['data'])['query'])
+                self.assertEqual(kwargs['headers'], {'Content-Type': 'application/json'})
                 return series
             return {'title': f'Episode {video_id}', 'videoReferences': [
                 {'url': 'https://example.com/video.mp4', 'format': 'mp4'}]}
@@ -90,6 +96,21 @@ class TestSVTSeriesIE(unittest.TestCase):
         self.assertEqual(requested, [
             'https://api.svt.se/contento/graphql',
             API_URL.format('abc123'), API_URL.format('def456')])
+
+    def test_unknown_series_slug_raises_extractor_error(self):
+        # The API answers an unknown slug with an empty list instead of an error
+        ie = SVTSeriesIE(FakeYDL())
+        ie._download_json = lambda *args, **kwargs: {'data': {'listablesBySlug': []}}
+        with self.assertRaisesRegex(ExtractorError, 'series data'):
+            ie.extract('https://www.svtplay.se/no-such-series')
+
+    def test_mismatched_series_slug_raises_extractor_error(self):
+        # A stale cached response for another series must not be returned as this one
+        ie = SVTSeriesIE(FakeYDL())
+        ie._download_json = lambda *args, **kwargs: {'data': {'listablesBySlug': [{
+            'id': 'jpmQYgn', 'slug': 'rederiet', 'name': 'Rederiet', 'associatedContent': []}]}}
+        with self.assertRaisesRegex(ExtractorError, 'rederiet'):
+            ie.extract('https://www.svtplay.se/lokala-nyheter-vast')
 
 
 if __name__ == '__main__':

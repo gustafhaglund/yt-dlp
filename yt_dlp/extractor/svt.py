@@ -3,6 +3,7 @@ import re
 
 from .common import InfoExtractor
 from ..utils import (
+    ExtractorError,
     determine_ext,
     dict_get,
     int_or_none,
@@ -321,10 +322,7 @@ class SVTSeriesIE(SVTBaseIE):
     def _real_extract(self, url):
         series_slug, season_id = self._match_valid_url(url).groups()
 
-        series = self._download_json(
-            'https://api.svt.se/contento/graphql', series_slug,
-            'Downloading series page', query={
-                'query': '''{
+        query = '''{
   listablesBySlug(slugs: ["%s"]) {
     associatedContent(include: [productionPeriod, season]) {
       items {
@@ -341,9 +339,18 @@ class SVTSeriesIE(SVTBaseIE):
     longDescription
     name
     shortDescription
+    slug
   }
-}''' % series_slug,  # noqa: UP031
-            })['data']['listablesBySlug'][0]
+}''' % series_slug  # noqa: UP031
+        # SVT serves cached GET responses regardless of the query string, which can
+        # return another series' data, so POST the query instead
+        series = traverse_obj(self._download_json(
+            'https://api.svt.se/contento/graphql', series_slug, 'Downloading series page',
+            data=json.dumps({'query': query}).encode(), headers={'Content-Type': 'application/json'},
+        ), ('data', 'listablesBySlug', 0, {dict}, {require('series data')}))
+        if series.get('slug') != series_slug:
+            raise ExtractorError(
+                f'API returned series "{series.get("slug")}" instead of "{series_slug}"', video_id=series_slug)
 
         season_name = None
 
